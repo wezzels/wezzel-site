@@ -1,0 +1,202 @@
+version: "3.3"
+
+#To run use: podman-compose --env-file=default.env
+#File default.env is:
+#   ROOT_PASSWORD=<password>
+#   GITLAB_SSH=2222
+#   GITLAB_SSH=<password>
+#   ACME_EMAIL=<username>@gmail.com
+#   EXT_HOSTNAME=<hostname>
+#   SMTP_EMAIL=<username>@gmail.com
+#   SMTP_PASSWORD=<password>
+#   SMTP_USERNAME=<username>
+#   SMTP_DOMAIN=gmail.com
+#   DATABASE_USER=postgres
+#   DATABASE_PASSWORD=<password>
+#   DATABASE=gitlab
+#
+#   after creating default.env run the following
+#   podman-compose --env-file=default.env up
+#
+#   If building new system.
+#   dnf install -y podman git git-lfs python3-pip
+#
+#   pip3 install --upgrade pip
+#   pip3 install podman-compose
+#
+#   echo "${GUSER}:100000:65536" >> /etc/subuid
+#   echo "${GUSER}:100000:65536" >> /etc/subgid
+#
+#   Administration
+#   podman load --quiet -i /mnt/gitlab-ce-latest.tar
+#   podman save -o gitlab-ce-latest.tar docker.io/gitlab/gitlab-ce:latest
+#
+#   # add generic user.
+#   #!/usr/bin/bash
+#   curl --request POST --header "PRIVATE-TOKEN: `bash `" \
+#     "http://gitlab/api/v4/users?email=wezzels@gmail.com&password=${ROOT_PASSWD}&username=${GUSE}&name=WesRobbins&reset_password=false"
+#
+#    
+#   # Create token for api access for root and defualt user
+#   #!/usr/bin/env bash
+#        gitlab_host="http://gitlab"
+#        gitlab_user="root"
+#        gitlab_password="${ROOT_PASSWD}"
+#        rm cookies.txt
+#
+#        body_header=$(curl -s -c cookies.txt -i "${gitlab_host}/users/sign_in" -s --insecure)
+#        csrf_token=$(echo $body_header | perl -ne 'print "$1\n" if /new_user.*?authenticity_token"[[:blank:]]value="(.+?)"/' | sed -n 1p)
+#        curl -s -L -b cookies.txt -c cookies.txt -i "${gitlab_host}/users/sign_in" \
+#          --data-raw "user%5Blogin%5D=${gitlab_user}&user%5Bpassword%5D=${gitlab_password}" \
+#          --data-urlencode "authenticity_token=${csrf_token}" \
+#          --compressed \
+#          --insecure 2>&1 > /dev/null
+#
+#        body_header=$(curl -s -H 'user-agent: curl' -b cookies.txt -i "${gitlab_host}/-/profile/personal_access_tokens" -s --insecure)
+#
+#        csrf_token=$(echo $body_header | perl -ne 'print "$1\n" if /csrf-token"[[:blank:]]content="(.+?)"/' | sed -n 1p)
+#        body_header=$(curl -s -L -b cookies.txt "${gitlab_host}/-/profile/personal_access_tokens" \
+#          --data-urlencode "authenticity_token=${csrf_token}" \
+#          --data 'personal_access_token[name]=golab-generated&personal_access_token[expires_at]=&personal_access_token[scopes][]=api' --insecure)
+#        personal_access_token=$(echo $body_header | perl -ne 'print "$1\n" if /new_token":"(.+?)"/' | sed -n 1p)
+#
+#        echo "${personal_access_token}"
+ 
+
+
+services:
+  traefik:
+    image: "traefik"
+      #image: "traefik:v2.10"
+    container_name: "traefik"
+    command:
+      # uncomment to enable debugging info
+      #- "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.ssh-gitlab.address=:${GITLAB_SSH}"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      # uncomment out if testing or want selfsigned  
+      - "--certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+      - "80:80"
+      - "8080:8080"
+      - "5000:5000"
+    volumes:
+      - "./gitlab/letsencrypt:/letsencrypt"
+      - "/run/user/1001/podman/podman.sock:/var/run/docker.sock:z"
+
+
+  gitlab:
+    image: 'gitlab/gitlab-ce:latest'
+    container_name: gitlab
+    restart: unless-stopped
+    hostname: "${EXT_HOSTNAME}"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url "https://${EXT_HOSTNAME}"
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+
+        gitlab_rails['db_adapter'] = "postgresql"
+        gitlab_rails['db_database'] = "${DATABASE}"
+        gitlab_rails['db_username'] = "${DATABASE_USER}"
+        gitlab_rails['db_password'] = "${DATABASE_PASSWORD}"
+        gitlab_rails['db_host'] = "gitlab_database"
+        gitlab_rails['initial_root_password'] = '${GITLAB_ADMIN_PASSWORD}'
+        gitlab_rails['lfs_enabled'] = true
+        gitlab_rails['lfs_storage_path'] = "/var/opt/gitlab-lfs-data"
+
+        registry['enable'] = false
+        gitlab_rails['registry_enabled'] = true
+        gitlab_rails['registry_host'] = "registry.${EXT_HOSTNAME}"
+        gitlab_rails['registry_api_url'] = "https://registry.${EXT_HOSTNAME}"
+        gitlab_rails['registry_issuer'] = "gitlab"
+        gitlab_rails['smtp_enable'] = true
+        gitlab_rails['smtp_address'] = "${SMTP_EMAIL}"
+        gitlab_rails['smtp_port'] = 587
+        gitlab_rails['smtp_user_name'] = "${SMTP_USERNAME}"
+        gitlab_rails['smtp_password'] = "${SMTP_PASSWORD}"
+        gitlab_rails['smtp_domain'] = "${SMTP_DOMAIN}"
+        gitlab_rails['smtp_authentication'] = "login"
+        gitlab_rails['smtp_enable_starttls_auto'] = true
+        gitlab_rails['smtp_tls'] = false
+        gitlab_rails['smtp_ssl'] = true
+        gitlab_rails['smtp_force_ssl'] = true
+        gitlab_rails['gitlab_email_from'] = "${SMTP_EMAIL}"
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH}
+    ports:
+      - "${GITLAB_SSH}:${GITLAB_SSH}"
+    volumes:
+      - "/run/user/1001/podman/podman.sock:/var/run/docker.sock:z"
+      - "./gitlab/gitlab-lfs-data:/var/opt/gitlab-lfs-data"
+      - "./gitlab/config:/etc/gitlab"
+      - "./gitlab/log:/var/log/gitlab"
+      - "./gitlab/data:/var/opt/gitlab"
+      - "./gitlab/letsencrypt/certs/idp.wezzel.com:/certs"
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitlab.entrypoints=web"
+      - traefik.http.routers.gitlab.rule=Host(`${EXT_HOSTNAME}`)
+      - "traefik.http.middlewares.gitlab-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.gitlab.middlewares=gitlab-https-redirect"
+      - "traefik.http.routers.gitlab-secure.entrypoints=websecure"
+      - traefik.http.routers.gitlab-secure.rule=Host(`${EXT_HOSTNAME}`)
+      - "traefik.http.routers.gitlab-secure.tls=true"
+      - "traefik.http.routers.gitlab-secure.tls.certresolver=myresolver"
+      - "traefik.http.routers.gitlab-secure.service=gitlab"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=80"
+        #- "traefik.docker.network=traefikproxy"
+      - "traefik.tcp.routers.gitlab-ssh.entrypoints=ssh-gitlab"
+      - "traefik.tcp.routers.gitlab-ssh.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.gitlab-ssh.service=gitlab-ssh-svc"
+      - "traefik.tcp.services.gitlab-ssh-svc.loadbalancer.server.port=${GITLAB_SSH}"
+  registry:
+    restart: unless-stopped
+    image: registry:2.7
+    container_name: gitlab_registry
+    volumes:
+      - "./gitlab/registry/data:/registry"
+      - "./gitlab/letsencrypt/certs/${EXT_HOSTNAME}:/certs"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.registry.entrypoints=web"
+      - "traefik.http.routers.registry.rule=Host(`registry.${EXT_HOSTNAME}`)"
+      - "traefik.http.middlewares.registry-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.registry.middlewares=registry-https-redirect"
+      - "traefik.http.routers.registry-secure.entrypoints=websecure"
+      - "traefik.http.routers.registry-secure.rule=Host(`registry.${EXT_HOSTNAME}`)"
+      - "traefik.http.routers.registry-secure.tls=true"
+      - "traefik.http.routers.registry-secure.tls.certresolver=myresolver"
+      - "traefik.http.routers.registry-secure.service=registry"
+      - "traefik.http.services.registry.loadbalancer.server.port=5000"
+        #- "traefik.docker.network=traefikproxy"
+    environment:
+          REGISTRY_LOG_LEVEL: debug
+          REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /registry
+          REGISTRY_AUTH_TOKEN_REALM: https://${EXT_HOSTNAME}/jwt/auth
+          REGISTRY_AUTH_TOKEN_SERVICE: container_registry
+          REGISTRY_AUTH_TOKEN_ISSUER: gitlab
+          REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /certs/certificate.crt
+          # REGISTRY_HTTP_SECRET: 
+          REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+  database:
+    image: postgres:alpine
+    container_name: gitlab_database
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD}"
+      POSTGRES_DB: "${DATABASE}"
+    volumes:
+        - "./gitlab/data/database:/var/lib/postgresql/data"
