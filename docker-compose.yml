@@ -34,7 +34,7 @@ version: "3.3"
 #   # add generic user.
 #   #!/usr/bin/bash
 #   curl --request POST --header "PRIVATE-TOKEN: `bash `" \
-#     "http://gitlab/api/v4/users?email=wezzels@gmail.com&password=${ROOT_PASSWD}&username=${GUSE}&name=WesRobbins&reset_password=false"
+#     "http://gitlab/api/v4/users?email=user@example.com&password=${ROOT_PASSWD}&username=${GUSER}&name=<username>&reset_password=false"
 #
 #    
 #   # Create token for api access for root and defualt user
